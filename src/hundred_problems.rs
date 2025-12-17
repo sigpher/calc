@@ -1,0 +1,229 @@
+use printpdf::*;
+use rand::Rng;
+use std::collections::HashSet;
+use std::env::args;
+use std::error::Error;
+use std::fs::File;
+use std::io::BufWriter;
+
+// 定义题目类型
+#[derive(Debug, Clone, Copy)]
+pub enum Operation {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+}
+
+impl Operation {
+    pub fn to_symbol(&self) -> &str {
+        match self {
+            Operation::Add => "+",
+            Operation::Subtract => "-",
+            Operation::Multiply => "×",
+            Operation::Divide => "÷",
+        }
+    }
+
+    pub fn random() -> Self {
+        let mut rng = rand::thread_rng();
+        match rng.gen_range(0..4) {
+            0 => Operation::Add,
+            1 => Operation::Subtract,
+            2 => Operation::Multiply,
+            _ => Operation::Divide,
+        }
+    }
+}
+
+// 定义一道题目
+#[derive(Debug)]
+pub struct MathProblem {
+    pub a: u8,
+    pub b: u8,
+    pub op: Operation,
+}
+
+impl MathProblem {
+    pub fn new() -> Self {
+        let mut rng = rand::thread_rng();
+        let op = Operation::random();
+
+        match op {
+            Operation::Add => {
+                // 加法：和不超过100
+                let a = rng.gen_range(10..90);
+                let b = rng.gen_range(1..(100 - a + 1));
+                MathProblem { a, b, op }
+            }
+            Operation::Subtract => {
+                // 减法：结果非负，被减数不超过100
+                let a = rng.gen_range(20..100);
+                let b = rng.gen_range(1..a);
+                MathProblem { a, b, op }
+            }
+            Operation::Multiply => {
+                // 乘法：表内乘法，不超过9×9
+                let a = rng.gen_range(2..10);
+                let b = rng.gen_range(2..10);
+                MathProblem { a, b, op }
+            }
+            Operation::Divide => {
+                // 除法：表内除法，整除
+                let a = rng.gen_range(4..=81);
+                // 找到a的因数作为b
+                let mut factors = Vec::new();
+                for i in 2..=9 {
+                    if a % i == 0 && a / i >= 2 && a / i <= 9 {
+                        factors.push(i);
+                    }
+                }
+
+                if factors.is_empty() {
+                    // 如果没有合适的因数，重新生成
+                    Self::new()
+                } else {
+                    let idx = rng.gen_range(0..factors.len());
+                    let b = factors[idx];
+                    MathProblem { a, b, op }
+                }
+            }
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        format!("{:>2} {} {:>2} =", self.a, self.op.to_symbol(), self.b)
+    }
+}
+
+pub fn generate_problems(count: usize) -> Vec<MathProblem> {
+    let mut problems = Vec::new();
+    let mut seen = HashSet::new();
+
+    while problems.len() < count {
+        let problem = MathProblem::new();
+        let problem_str = problem.to_string();
+
+        // 避免重复题目
+        if !seen.contains(&problem_str) {
+            seen.insert(problem_str.clone());
+            problems.push(problem);
+        }
+    }
+
+    problems
+}
+
+pub fn create_pdf(
+    problems: &[MathProblem],
+    filename: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // 创建PDF文档 - A4大小
+    let (doc, page1, layer1) = PdfDocument::new(
+        "MathProblems",
+        Mm(210.0), // A4宽度
+        Mm(297.0), // A4高度
+        "Layer 1",
+    );
+
+    let current_layer = doc.get_page(page1).get_layer(layer1);
+
+    // 设置字体 - 使用等宽字体确保对齐
+    let font = doc.add_builtin_font(BuiltinFont::Courier)?;
+
+    // 页面布局参数
+    let page_width = 210.0;
+    let page_height = 297.0;
+    let margin = 20.0; // 边距
+
+    // 计算可用的宽度和高度
+    let usable_width = page_width - 2.0 * margin;
+    let usable_height = page_height - 2.0 * margin;
+
+    // 每行4道题，共25行（100道题）
+    let cols = 4;
+    let rows = 25;
+
+    // 计算每列的宽度
+    let col_width = usable_width / cols as f32;
+
+    // 计算行高
+    let row_height = usable_height / rows as f32;
+
+    // 字体大小
+    let font_size = 14.0;
+
+    // 生成并排列题目
+    for (index, problem) in problems.iter().enumerate() {
+        let row = index / cols;
+        let col = index % cols;
+
+        // 计算坐标
+        let x = margin + (col as f32 * col_width) + (col_width - 40.0) / 2.0;
+        let y = page_height
+            - margin
+            - (row as f32 * row_height)
+            - (row_height - font_size / 2.85) / 2.0;
+
+        // 添加题目文本
+        current_layer.use_text(&problem.to_string(), font_size, Mm(x), Mm(y), &font);
+    }
+
+    // 保存PDF
+    doc.save(&mut BufWriter::new(File::create(filename)?))?;
+
+    Ok(())
+}
+
+pub fn run() -> Result<(), Box<dyn Error>> {
+    let count = args()
+        .skip(1)
+        .next()
+        .unwrap_or("1".into())
+        .trim()
+        .parse::<u8>()?;
+    for page in 0..count {
+        // 生成100道题目
+        let problems = generate_problems(100);
+        // 显示题目预览
+        // println!("\n题目预览（前20道）：");
+        // println!("{}", "=".repeat(60));
+        // for (i, chunk) in problems.chunks(4).enumerate() {
+        //     if i >= 5 {
+        //         break;
+        //     } // 只显示前5行
+        //     for problem in chunk {
+        //         print!("{}    ", problem.to_string());
+        //     }
+        //     println!();
+        // }
+        // println!("{}", "=".repeat(60));
+
+        // 创建PDF
+        // let filename = "口算题.pdf";
+        let filename = format!("口算题 - {}.pdf", page + 1);
+        create_pdf(&problems, &filename)?;
+
+        println!("\n✅ 已生成100道口算题！");
+        println!("\n📄 文件已保存为：{}", filename);
+
+        // 统计题目类型
+        let mut counts = [0; 4]; // [加, 减, 乘, 除]
+        for problem in &problems {
+            match problem.op {
+                Operation::Add => counts[0] += 1,
+                Operation::Subtract => counts[1] += 1,
+                Operation::Multiply => counts[2] += 1,
+                Operation::Divide => counts[3] += 1,
+            }
+        }
+    }
+
+    // println!("\n📊 题目类型分布：");
+    // println!("  加法：{}道", counts[0]);
+    // println!("  减法：{}道", counts[1]);
+    // println!("  乘法：{}道", counts[2]);
+    // println!("  除法：{}道", counts[3]);
+
+    Ok(())
+}
